@@ -6,6 +6,7 @@
 
 #include "../random/random.h"
 #include <string.h>
+#include "strategy.h"
 
 
 
@@ -282,6 +283,121 @@ int EphemeralKeyGeneration_A(const unsigned char* PrivateKeyA, unsigned char* Co
     Dlogs3_dual(f, D, d0, c0, d1, c1);
     Compress_PKA_dual(d0, c0, d1, c1, a24, rs, CompressedPKA);
     return 0;
+}
+
+static void Compress_PKA_dual_new(int label, digit_t* d, digit_t* c0, digit_t* c1, f2elm_t a24, unsigned int* rs, unsigned char* CompressedPKA)
+{
+	//unsigned int bit;
+	digit_t temp[NWORDS_ORDER] = { 0 };
+	f2elm_t A;
+
+	fp2add(a24, a24, A);
+	fp2add(A, A, A);
+	fpsub(A[0], (digit_t*)Montgomery_one, A[0]);
+	fpsub(A[0], (digit_t*)Montgomery_one, A[0]);    // 4*a24-2
+
+	//bit = mod3(d1);
+	to_Montgomery_mod_order(d, d, (digit_t*)Bob_order, (digit_t*)&Montgomery_RB2, (digit_t*)&Montgomery_RB1);   // Converting to Montgomery representation
+	to_Montgomery_mod_order(c0, c0, (digit_t*)Bob_order, (digit_t*)&Montgomery_RB2, (digit_t*)&Montgomery_RB1);
+	to_Montgomery_mod_order(c1, c1, (digit_t*)Bob_order, (digit_t*)&Montgomery_RB2, (digit_t*)&Montgomery_RB1);
+
+	if (label == 1)
+	{
+		Montgomery_neg(d, (digit_t*)&Bob_order);
+		from_Montgomery_mod_order(d, d, (digit_t*)Bob_order, (digit_t*)&Montgomery_RB2);                    // Converting back from Montgomery representation
+		encode_to_bytes(d, &CompressedPKA[0], ORDER_B_ENCODED_BYTES);
+		Montgomery_neg(c1, (digit_t*)&Bob_order);
+		from_Montgomery_mod_order(c1, c1, (digit_t*)Bob_order, (digit_t*)&Montgomery_RB2);
+		encode_to_bytes(c1, &CompressedPKA[ORDER_B_ENCODED_BYTES], ORDER_B_ENCODED_BYTES);
+		from_Montgomery_mod_order(c0, c0, (digit_t*)Bob_order, (digit_t*)&Montgomery_RB2);
+		encode_to_bytes(c0, &CompressedPKA[2 * ORDER_B_ENCODED_BYTES], ORDER_B_ENCODED_BYTES);
+		CompressedPKA[3 * ORDER_B_ENCODED_BYTES + FP2_ENCODED_BYTES] = 0x00;
+	}
+	else {
+		Montgomery_neg(d, (digit_t*)&Bob_order);
+		from_Montgomery_mod_order(d, d, (digit_t*)Bob_order, (digit_t*)&Montgomery_RB2);                     // Converting back from Montgomery representation         
+		encode_to_bytes(d, &CompressedPKA[0], ORDER_B_ENCODED_BYTES);
+		from_Montgomery_mod_order(c1, c1, (digit_t*)Bob_order, (digit_t*)&Montgomery_RB2);
+		encode_to_bytes(c1, &CompressedPKA[ORDER_B_ENCODED_BYTES], ORDER_B_ENCODED_BYTES);
+		Montgomery_neg(c0, (digit_t*)&Bob_order);
+		from_Montgomery_mod_order(c0, c0, (digit_t*)Bob_order, (digit_t*)&Montgomery_RB2);
+		encode_to_bytes(c0, &CompressedPKA[2 * ORDER_B_ENCODED_BYTES], ORDER_B_ENCODED_BYTES);
+		CompressedPKA[3 * ORDER_B_ENCODED_BYTES + FP2_ENCODED_BYTES] = 0x80;
+	}
+	fp2_encode(A, &CompressedPKA[3 * ORDER_B_ENCODED_BYTES]);
+	CompressedPKA[3 * ORDER_B_ENCODED_BYTES + FP2_ENCODED_BYTES] |= (unsigned char)rs[0];
+	CompressedPKA[3 * ORDER_B_ENCODED_BYTES + FP2_ENCODED_BYTES + 1] = (unsigned char)rs[1];
+	CompressedPKA[3 * ORDER_B_ENCODED_BYTES + FP2_ENCODED_BYTES + 2] = (unsigned char)rs[2];
+}
+
+int EphemeralKeyGeneration_A_new(const unsigned char* PrivateKeyA, unsigned char* CompressedPKA)
+{ // Alice's ephemeral public key generation using compression -- SIDH protocol
+  // Output: PrivateKeyA[MSG_BYTES + SECRETKEY_A_BYTES] <- x(K_A) where K_A = PA + sk_A*Q_A 
+	unsigned int rs[3];
+	int D[ALICE_DLEN_3] = { 0 };
+	f2elm_t a24, As[MAX_Alice + 1][5], f[4];
+	digit_t c0[NWORDS_ORDER] = { 0 }, c1[NWORDS_ORDER] = { 0 };
+	point_full_proj_t Rs[2];
+
+	FullIsogeny_A_dual((unsigned char*)PrivateKeyA, As, a24, 0);
+	BuildOrdinary3nBasis_dual(a24, As, Rs, rs, &rs[2]);
+	Tate3_pairings(Rs, f);
+
+
+#define _TEST_l 3
+#define _TEST_m OBOB_EXPON
+#define _TEST_w ALICE_WINDOW
+#define _TEST_r (_TEST_m % _TEST_w)
+
+	f2elm_t _A[_TEST_m / _TEST_w];
+	f2elm_t _C[_TEST_m];
+	int label = 0;
+	choose_base(_TEST_l, _TEST_m, _TEST_w, f[0], f[1], &label, _A, _C);
+#if _TEST_r != 0
+#define _TEST_solveDLP(x) (PH_DLP2((x), D, Str_, _TEST_m, _TEST_l, _TEST_w, B, ALICE_DLEN_3, f[label],_C))
+#else
+#define _TEST_solveDLP(x) (PH_DLP((x), D, Str_, _TEST_m, _TEST_l, _TEST_w, B))
+#endif
+	f2elm_t** B = (f2elm_t**)malloc(sizeof(f2elm_t*) * (_TEST_m / _TEST_w));
+	for (int i = 0; i < _TEST_m / _TEST_w; i++)
+	{
+		B[i] = (f2elm_t*)malloc(sizeof(f2elm_t) * sintpow(_TEST_l, _TEST_w) / 2);
+	}
+	T_DLP(_TEST_l, _TEST_m, _TEST_w, _A, B);
+
+	int Str_[ALICE_STR_LEN] = ALICE_STR;
+
+	if (label == 1)
+	{
+		_TEST_solveDLP(f[0]);
+	}
+	else
+	{
+		_TEST_solveDLP(f[1]);
+	}
+	digit_t d[NWORDS_ORDER] = { 0 };
+	from_base(D, d, ALICE_DLEN_3, ALICE_ELL3_W);
+	_TEST_solveDLP(f[2]);
+	from_base(D, c0, ALICE_DLEN_3, ALICE_ELL3_W);
+	mp_sub((digit_t*)Bob_order, c0, c0, NWORDS_ORDER);
+	_TEST_solveDLP(f[3]);
+	from_base(D, c1, ALICE_DLEN_3, ALICE_ELL3_W);
+	mp_sub((digit_t*)Bob_order, c1, c1, NWORDS_ORDER);
+
+	for (int i = 0; i < _TEST_m / _TEST_w; i++)
+	{
+		free(B[i]);
+	}
+	free(B);
+
+	Compress_PKA_dual_new(label, d, c0, c1, a24, rs, CompressedPKA);
+	return 0;
+#undef _TEST_l
+#undef _TEST_m
+#undef _TEST_w
+#undef _TEST_r
+#undef _TEST_solveDLP
+
 }
 
 
@@ -616,6 +732,39 @@ static void Compress_PKB_dual(digit_t *d0, digit_t *c0, digit_t *d1, digit_t *c1
     CompressedPKB[3*ORDER_A_ENCODED_BYTES + FP2_ENCODED_BYTES + 2] = 0;
 }
 
+static void Compress_PKB_dual_new(int label, digit_t* d, digit_t* c0, digit_t* c1, f2elm_t A, unsigned char qnr, unsigned char ind, unsigned char* CompressedPKB)
+{
+	digit_t tmp[2 * NWORDS_ORDER], inv[NWORDS_ORDER];
+	if (label == 1)
+	{
+		Montgomery_neg(d, (digit_t*)Alice_order);
+		encode_to_bytes(d, &CompressedPKB[0], ORDER_A_ENCODED_BYTES);
+		CompressedPKB[ORDER_A_ENCODED_BYTES - 1] &= MASK_ALICE;
+		Montgomery_neg(c1, (digit_t*)Alice_order);
+		encode_to_bytes(c1, &CompressedPKB[ORDER_A_ENCODED_BYTES], ORDER_A_ENCODED_BYTES);
+		CompressedPKB[2 * ORDER_A_ENCODED_BYTES - 1] &= MASK_ALICE;
+		encode_to_bytes(c0, &CompressedPKB[2 * ORDER_A_ENCODED_BYTES], ORDER_A_ENCODED_BYTES);
+		CompressedPKB[3 * ORDER_A_ENCODED_BYTES - 1] &= MASK_ALICE;
+		CompressedPKB[3 * ORDER_A_ENCODED_BYTES + FP2_ENCODED_BYTES] = 0x00;
+	}
+	else
+	{
+		Montgomery_neg(d, (digit_t*)Alice_order);
+		encode_to_bytes(d, &CompressedPKB[0], ORDER_A_ENCODED_BYTES);
+		CompressedPKB[ORDER_A_ENCODED_BYTES - 1] &= MASK_ALICE;
+		encode_to_bytes(c1, &CompressedPKB[ORDER_A_ENCODED_BYTES], ORDER_A_ENCODED_BYTES);
+		CompressedPKB[2 * ORDER_A_ENCODED_BYTES - 1] &= MASK_ALICE;
+		Montgomery_neg(c0, (digit_t*)Alice_order);
+		encode_to_bytes(c0, &CompressedPKB[2 * ORDER_A_ENCODED_BYTES], ORDER_A_ENCODED_BYTES);
+		CompressedPKB[3 * ORDER_A_ENCODED_BYTES - 1] &= MASK_ALICE;
+		CompressedPKB[3 * ORDER_A_ENCODED_BYTES + FP2_ENCODED_BYTES] = 0x80;
+	}
+	fp2_encode(A, &CompressedPKB[3 * ORDER_A_ENCODED_BYTES]);
+	CompressedPKB[3 * ORDER_A_ENCODED_BYTES + FP2_ENCODED_BYTES] |= qnr;
+	CompressedPKB[3 * ORDER_A_ENCODED_BYTES + FP2_ENCODED_BYTES + 1] = ind;
+	CompressedPKB[3 * ORDER_A_ENCODED_BYTES + FP2_ENCODED_BYTES + 2] = 0;
+}
+
 
 static int EphemeralKeyGeneration_B_extended(const unsigned char* PrivateKeyB, unsigned char* CompressedPKB, unsigned int sike)
 { // Bob's ephemeral public key generation using compression -- SIKE protocol
@@ -663,6 +812,98 @@ int EphemeralKeyGeneration_B(const unsigned char* PrivateKeyB, unsigned char* Co
 { // Bob's ephemeral public key generation using compression -- SIDH protocol
 
     return EphemeralKeyGeneration_B_extended(PrivateKeyB, CompressedPKB, 0);
+}
+
+int EphemeralKeyGeneration_B_new(const unsigned char* PrivateKeyB, unsigned char* CompressedPKB)
+{
+	// Bob's ephemeral public key generation using compression -- SIKE protocol
+	unsigned char qnr, ind;
+	int D[BOB_DLEN_2] = { 0 };
+	digit_t c0[NWORDS_ORDER] = { 0 }, c1[NWORDS_ORDER] = { 0 };
+	f2elm_t Ds[MAX_Bob][2] = { 0 }, f[4] = { 0 }, A = { 0 };
+	point_full_proj_t Rs[2] = { 0 };
+	point_t Pw, Qw;
+
+	FullIsogeny_B_dual(PrivateKeyB, Ds, A);
+	BuildOrdinary2nBasis_dual(A, Ds, Rs, &qnr, &ind);  // Generate a basis in E_A and pulls it back to E_A6. Rs[0] and Rs[1] affinized.
+
+	// Maps from y^2 = x^3 + 6x^2 + x into y^2 = x^3 -11x + 14
+	fpadd((digit_t*)Montgomery_one, (Rs[0]->X)[0], (Rs[0]->X)[0]);
+	fpadd((digit_t*)Montgomery_one, (Rs[0]->X)[0], (Rs[0]->X)[0]);  // Weierstrass form 
+	fpadd((digit_t*)Montgomery_one, (Rs[1]->X)[0], (Rs[1]->X)[0]);
+	fpadd((digit_t*)Montgomery_one, (Rs[1]->X)[0], (Rs[1]->X)[0]);  // Weierstrass form 
+
+	fpcopy((digit_t*)A_basis_zero + 0 * NWORDS_FIELD, Pw->x[0]);
+	fpcopy((digit_t*)A_basis_zero + 1 * NWORDS_FIELD, Pw->x[1]);
+	fpcopy((digit_t*)A_basis_zero + 2 * NWORDS_FIELD, Pw->y[0]);
+	fpcopy((digit_t*)A_basis_zero + 3 * NWORDS_FIELD, Pw->y[1]);
+	fpcopy((digit_t*)A_basis_zero + 4 * NWORDS_FIELD, Qw->x[0]);
+	fpcopy((digit_t*)A_basis_zero + 5 * NWORDS_FIELD, Qw->x[1]);
+	fpcopy((digit_t*)A_basis_zero + 6 * NWORDS_FIELD, Qw->y[0]);
+	fpcopy((digit_t*)A_basis_zero + 7 * NWORDS_FIELD, Qw->y[1]);
+	Tate2_pairings(Pw, Qw, Rs, f);
+	fp2correction(f[0]);
+	fp2correction(f[1]);
+	fp2correction(f[2]);
+	fp2correction(f[3]);
+
+	f2elm_t t0, t1;
+	from_fp2mont(f[0], t0);
+	from_fp2mont(f[1], t1);
+
+#define _TEST_l 2
+#define _TEST_m OALICE_BITS
+#define _TEST_w BOB_WINDOW
+#define _TEST_r (_TEST_m % _TEST_w)
+
+	f2elm_t _A[_TEST_m / _TEST_w];
+	f2elm_t _C[_TEST_m];
+	int label = 0;
+	choose_base(_TEST_l, _TEST_m, _TEST_w, f[0], f[1], &label, _A, _C);
+#if _TEST_r != 0
+#define _TEST_solveDLP(x) (PH_DLP2((x), D, Str_, _TEST_m, _TEST_l, _TEST_w, B, BOB_DLEN_2, f[label], _C))
+#else
+#define _TEST_solveDLP(x) (PH_DLP((x), D, Str_, _TEST_m, _TEST_l, _TEST_w, B))
+#endif
+	f2elm_t** B = (f2elm_t**)malloc(sizeof(f2elm_t*) * (_TEST_m / _TEST_w));
+	for (int i = 0; i < _TEST_m / _TEST_w; i++)
+	{
+		B[i] = (f2elm_t*)malloc(sizeof(f2elm_t) * sintpow(_TEST_l, _TEST_w) / 2);
+	}
+	T_DLP(_TEST_l, _TEST_m, _TEST_w, _A, B);
+
+	int Str_[BOB_STR_LEN] = BOB_STR;
+
+	if (label == 1)
+	{
+		_TEST_solveDLP(f[0]);
+	}
+	else
+	{
+		_TEST_solveDLP(f[1]);
+	}
+	digit_t d[NWORDS_ORDER] = { 0 };
+	from_base(D, d, BOB_DLEN_2, BOB_ELL2_W);
+	_TEST_solveDLP(f[2]);
+	from_base(D, c0, BOB_DLEN_2, BOB_ELL2_W);
+	mp_sub((digit_t*)Alice_order, c0, c0, NWORDS_ORDER);
+	_TEST_solveDLP(f[3]);
+	from_base(D, c1, BOB_DLEN_2, BOB_ELL2_W);
+	mp_sub((digit_t*)Alice_order, c1, c1, NWORDS_ORDER);
+
+	for (int i = 0; i < _TEST_m / _TEST_w; i++)
+	{
+		free(B[i]);
+	}
+	free(B);
+
+	Compress_PKB_dual_new(label, d, c0, c1, A, qnr, ind, CompressedPKB);
+	return 0;
+#undef _TEST_l
+#undef _TEST_m
+#undef _TEST_w
+#undef _TEST_r
+#undef _TEST_solveDLP
 }
 
 

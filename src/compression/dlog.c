@@ -3,7 +3,7 @@
 *
 * Abstract: Pohlig-Hellman with optimal strategy
 *********************************************************************************************/
-
+#include <stdlib.h>
 
 
 void from_base(int *D, digit_t *r, int Dlen, int base) 
@@ -423,4 +423,506 @@ void solve_dlog(const f2elm_t r, int *D, digit_t* d, int ell)
     }    
 }
 
+static __inline unsigned int fp2equal(const felm_t x, const felm_t y)
+{ // Is x = 0? return 1 (TRUE) if condition is true, 0 (FALSE) otherwise.
+  // SECURITY NOTE: This function does not run in constant-time.
+	unsigned int i;
 
+	for (i = 0; i < NWORDS_FIELD; i++) {
+		if (x[i] != y[i]) return 0;
+	}
+	return 1;
+}
+
+unsigned int sintpow(int x, int pow)
+{
+	unsigned int ret = 1;
+	while (pow != 0)
+	{
+		if ((pow & 1) == 1)
+			ret = (unsigned int)(ret * x);
+		x *= x;
+		pow >>= 1;
+	}
+	return ret;
+}
+
+int small_DLP(f2elm_t h, int l, int w, f2elm_t* C, int* r, int* sign)
+{
+	if (fp2equal(h[0], Montgomery_one) && is_felm_zero(h[1]))
+	{
+		*r = 0;
+		*sign = 1;
+		return 0;
+	}
+	for (unsigned int i = 0; i < sintpow(l, w) / 2; i++)
+	{
+		if (fp2equal(h[0], C[i][0]))
+		{
+			*r = i + 1;
+			if (fp2equal(h[1], C[i][1]))
+			{
+				*sign = 1;
+			}
+			else
+			{
+				*sign = -1;
+			}
+			return 0;
+		}
+	}
+	return 1;
+}
+
+void T_DLP(int l, int m, int w, f2elm_t* A, f2elm_t** B)
+{
+	for (int i = 0; i < m / w; i++)
+	{
+		fp2copy(A[i], B[i][0]);
+	}
+	for (int k = 0; k < m / w; k++)
+	{
+		for (unsigned int j = 1; j < sintpow(l, w) / 2; j++)
+		{
+			if (j % 2 == 1)
+			{
+				fp2copy(B[k][(j - 1) / 2], B[k][j]);
+				sqr_Fp2_cycl(B[k][j], (digit_t*)&Montgomery_one);
+				fp2correction(B[k][j]);
+			}
+			else
+			{
+				if (j % 3 == 2)
+				{
+					fp2copy(B[k][(j - 2) / 3], B[k][j]);
+					cube_Fp2_cycl(B[k][j], (digit_t*)&Montgomery_one);
+					fp2correction(B[k][j]);
+				}
+				else
+				{
+					fp2mul_mont(B[k][j - 1], B[k][0], B[k][j]);
+					fp2correction(B[k][j]);
+				}
+			}
+		}
+	}
+}
+
+void PH_DLP(f2elm_t h, int* D, int* Str, int m, int l, int w, f2elm_t** B)
+{
+	int i = 0, j = 0, k = 0, z = 0;
+	struct
+	{
+		f2elm_t f;
+		int i1;
+		int i2;
+	}stack[372];
+	int top = 0;
+	fp2copy(h, stack[top].f);
+	stack[top].i1 = 0;
+	stack[top].i2 = 0;
+	f2elm_t* Bslice = &B[m / w - 1][0];
+	while (k != m / w - 1)
+	{
+		while (j + k + 1 != m / w)
+		{
+			f2elm_t ht;
+			fp2copy(stack[top].f, ht);
+			j = j + Str[i];
+			for (int iii = 0; iii < Str[i] * w; iii++) {
+				if ((l & 1) == 0)
+					sqr_Fp2_cycl(ht, (digit_t*)&Montgomery_one);
+				else
+					cube_Fp2_cycl(ht, (digit_t*)&Montgomery_one);
+			}
+			fp2correction(ht);
+			top++;
+			fp2copy(ht, stack[top].f);
+			stack[top].i1 = j + k;
+			stack[top].i2 = Str[i];
+			i++;
+		}
+		f2elm_t hc;
+		fp2copy(stack[top].f, hc);
+		int pj = stack[top].i2;
+		top--;
+		j = j - pj;
+		int a, sign;
+		small_DLP(hc, l, w, Bslice, &a, &sign);
+		for (int ik = 0; ik <= top; ik++)
+		{
+			if (a != 0)
+			{
+				f2elm_t temp;
+				fp2copy(B[stack[ik].i1][a - 1], temp);
+				if (sign == 1)
+				{
+					fpneg(temp[1]);
+				}
+				fp2mul_mont(stack[ik].f, temp, stack[ik].f);
+				fp2correction(stack[ik].f);
+			}
+			stack[ik].i1++;
+		}
+		z++;
+		if (sign == 1)
+		{
+			D[k] = a;
+		}
+		else
+		{
+			D[k] = -a;
+		}
+		k++;
+	}
+	f2elm_t hr;
+	fp2copy(stack[top].f, hr);
+	top--;
+	int ar, signr;
+	small_DLP(hr, l, w, Bslice, &ar, &signr);
+	if (signr == 1)
+	{
+		D[k] = ar;
+	}
+	else
+	{
+		D[k] = -ar;
+	}
+}
+
+void fast_power(f2elm_t x , int l,  int w, int* D, f2elm_t* C, int Dlen)
+{
+	f2elm_t mul, temp;
+	fp2zero(x);
+	fpcopy((digit_t*)&Montgomery_one, x[0]);
+	int count1 = 0, count2 = 0, n, n_sgn;
+	for (int id = 0; id < Dlen - 1; id++)
+	{
+		n = D[id] > 0 ? D[id] : -D[id];
+		n_sgn = D[id] > 0 ? 1 : 0;
+		while (n > 0)
+		{
+			if ((l & 1) == 0)
+			{
+				if (n % 2 == 1)
+				{
+					fp2copy(C[count2], temp);
+					if (n_sgn == 0)
+					{
+						fpneg(temp[1]);
+					}
+					fp2mul_mont(x, temp, x);
+				}
+				count2++;
+				n /= 2;
+			}
+			else
+			{
+				if (n % 3 == 1)
+				{
+					fp2copy(C[count2], temp);
+					if (n_sgn == 0)
+					{
+						fpneg(temp[1]);
+					}
+					fp2mul_mont(x, temp, x);
+				}
+				if (n % 3 == 2)
+				{
+					fp2copy(C[count2], temp);
+					sqr_Fp2_cycl(temp, (digit_t*)&Montgomery_one);
+					if (n_sgn == 0)
+					{
+						fpneg(temp[1]);
+					}
+					fp2mul_mont(x, temp, x);
+				}
+				count2++;
+				n /= 3;
+			}
+		}
+		count1 += w;
+		count2 = count1;
+	}
+}
+
+void PH_DLP2(f2elm_t h, int* D, int* Str, int m, int l, int w, f2elm_t** B, int Dlen, f2elm_t g, f2elm_t* C)
+{
+	int i = 0, j = 0, k = 0;
+	int r = m % w;
+	struct
+	{
+		f2elm_t f;
+		int i1;
+		int i2;
+	}stack[372];
+	int top = 0;
+	fp2copy(h, stack[top].f);
+	for (int ir = 0; ir < r; ir++)
+	{
+		if ((l & 1) == 0)
+			sqr_Fp2_cycl(stack[top].f, (digit_t*)&Montgomery_one);
+		else
+			cube_Fp2_cycl(stack[top].f, (digit_t*)&Montgomery_one);
+	}
+	stack[top].i1 = 0;
+	stack[top].i2 = 0;
+	f2elm_t* Bslice = &B[m / w - 1][0];
+	while (k != m / w - 1)
+	{
+		while (j + k + 1 != m / w)
+		{
+			f2elm_t ht;
+			fp2copy(stack[top].f, ht);
+			j = j + Str[i];
+			for (int _i = 0; _i < Str[i] * w; _i++) {
+				if ((l & 1) == 0)
+					sqr_Fp2_cycl(ht, (digit_t*)&Montgomery_one);
+				else
+					cube_Fp2_cycl(ht, (digit_t*)&Montgomery_one);
+			}
+			top++;
+			fp2copy(ht, stack[top].f);
+			stack[top].i1 = j + k;
+			stack[top].i2 = Str[i];
+			i++;
+		}
+		f2elm_t hc;
+		fp2copy(stack[top].f, hc);
+		int pj = stack[top].i2;
+		top--;
+		j = j - pj;
+		int a, sign;
+		fp2correction(hc);
+		small_DLP(hc, l, w, Bslice, &a, &sign);
+		for (int ik = 0; ik <= top; ik++)
+		{
+			if (a != 0)
+			{
+				f2elm_t temp;
+				fp2copy(B[stack[ik].i1][a - 1], temp);
+				if (sign == 1)
+				{
+					fpneg(temp[1]);
+				}
+				fp2mul_mont(stack[ik].f, temp, stack[ik].f);
+				fp2correction(stack[ik].f);
+			}
+			stack[ik].i1++;
+		}
+		if (sign == 1)
+		{
+			D[k] = a;
+		}
+		else
+		{
+			D[k] = -a;
+		}
+		k++;
+	}
+	f2elm_t hr;
+	fp2copy(stack[top].f, hr);
+	top--;
+	int ar, signr;
+	small_DLP(hr, l, w, Bslice, &ar, &signr);
+	if (signr == 1)
+	{
+		D[k] = ar;
+	}
+	else
+	{
+		D[k] = -ar;
+	}
+	f2elm_t x;
+	fast_power(x, l, w, D, C, Dlen);
+	if (!is_felm_zero(x[1]))
+	{
+		fpneg(x[1]);
+	}
+	fp2mul_mont(h, x, x);
+	fp2correction(x);
+	int al, signl;
+	small_DLP(x, l, w, Bslice, &al, &signl);
+	int div = sintpow(l, w - r);
+	if (signl == 1)
+	{
+		D[m / w] = al / div;
+	}
+	else
+	{
+		D[m / w] = -al / div;
+	}
+}
+
+void choose_base(int l, int m, int w, f2elm_t g1, f2elm_t g2, int* label, f2elm_t* A, f2elm_t* C)
+{
+	*label = 1;
+	f2elm_t temp;
+	int r = m % w;
+	int count = 0;
+	if (r != 0)
+	{
+		fp2copy(g2, A[0]); fp2copy(g2, C[0]);
+		for (int i = 0; i < r; i++)
+		{
+			if ((l & 1) == 0)
+			{
+				sqr_Fp2_cycl(A[0], (digit_t*)&Montgomery_one);
+			}
+			else
+			{
+				cube_Fp2_cycl(A[0], (digit_t*)&Montgomery_one);
+			}
+			count++; fp2copy(A[0], C[count]);
+		}
+		for (int i = 1; i < m / w; i++)
+		{
+			fp2copy(A[i - 1], A[i]);
+			for (int j = 0; j < w; j++)
+			{
+				if ((l & 1) == 0)
+				{
+					sqr_Fp2_cycl(A[i], (digit_t*)&Montgomery_one);
+				}
+				else
+				{
+					cube_Fp2_cycl(A[i], (digit_t*)&Montgomery_one);
+				}
+				count++; fp2copy(A[i], C[count]);
+			}
+			if (is_felm_zero(A[i][1]) && fp2equal(A[i][0], Montgomery_one))
+			{
+				*label = 0;
+				break;
+			}
+		}
+		if (*label == 1)
+		{
+			fp2copy(A[m / w - 1], temp);
+			for (int i = 0; i < w - 1; i++)
+			{
+				if ((l & 1) == 0)
+				{
+					sqr_Fp2_cycl(temp, (digit_t*)&Montgomery_one);
+				}
+				else
+				{
+					cube_Fp2_cycl(temp, (digit_t*)&Montgomery_one);
+				}
+				count++; fp2copy(temp, C[count]);
+				if (is_felm_zero(temp[1]) && fp2equal(temp[0], Montgomery_one))
+				{
+					*label = 0;
+					break;
+				}
+			}
+		}
+		if (*label == 0)
+		{
+			fp2copy(g1, A[0]); fp2copy(g1, C[0]); count = 0;
+			for (int i = 0; i < r; i++)
+			{
+				if ((l & 1) == 0)
+				{
+					sqr_Fp2_cycl(A[0], (digit_t*)&Montgomery_one);
+				}
+				else
+				{
+					cube_Fp2_cycl(A[0], (digit_t*)&Montgomery_one);
+				}
+				count++; fp2copy(A[0], C[count]);
+			}
+			for (int i = 1; i < m / w; i++)
+			{
+				fp2copy(A[i - 1], A[i]);
+				for (int j = 0; j < w; j++)
+				{
+					if ((l & 1) == 0)
+					{
+						sqr_Fp2_cycl(A[i], (digit_t*)&Montgomery_one);
+					}
+					else
+					{
+						cube_Fp2_cycl(A[i], (digit_t*)&Montgomery_one);
+					}
+					count++; fp2copy(A[i], C[count]);
+				}
+			}
+			fp2copy(A[m / w - 1], temp);
+			for (int i = 0; i < w - r; i++)
+			{
+				if ((l & 1) == 0)
+				{
+					sqr_Fp2_cycl(temp, (digit_t*)&Montgomery_one);
+				}
+				else
+				{
+					cube_Fp2_cycl(temp, (digit_t*)&Montgomery_one);
+				}
+				count++; fp2copy(temp, C[count]);
+			}
+		}
+	}
+	else
+	{
+		fp2copy(g2, A[0]);
+		for (int i = 1; i < m / w; i++)
+		{
+			fp2copy(A[i - 1], A[i]);
+			for (int j = 0; j < w; j++)
+			{
+				if ((l & 1) == 0)
+					sqr_Fp2_cycl(A[i], (digit_t*)&Montgomery_one);
+				else
+					cube_Fp2_cycl(A[i], (digit_t*)&Montgomery_one);
+			}
+			if (is_felm_zero(A[i][1]) && fp2equal(A[i][0], Montgomery_one))
+			{
+				*label = 0;
+				break;
+			}
+		}
+		if (*label == 1)
+		{
+			fp2copy(A[m / w - 1], temp);
+			for (int i = 0; i < w - 1; i++)
+			{
+				if ((l & 1) == 0)
+					sqr_Fp2_cycl(temp, (digit_t*)&Montgomery_one);
+				else
+					cube_Fp2_cycl(temp, (digit_t*)&Montgomery_one);
+				if (is_felm_zero(temp[1]) && fp2equal(temp[0], Montgomery_one))
+				{
+					*label = 0;
+					break;
+				}
+			}
+		}
+		if (*label == 0)
+		{
+			fp2copy(g1, A[0]);
+			for (int i = 0; i < r; i++)
+			{
+				if ((l & 1) == 0)
+					sqr_Fp2_cycl(A[0], (digit_t*)&Montgomery_one);
+				else
+					cube_Fp2_cycl(A[0], (digit_t*)&Montgomery_one);
+			}
+			for (int i = 1; i < m / w; i++)
+			{
+				fp2copy(A[i - 1], A[i]);
+				for (int j = 0; j < w; j++)
+				{
+					if ((l & 1) == 0)
+						sqr_Fp2_cycl(A[i], (digit_t*)&Montgomery_one);
+					else
+						cube_Fp2_cycl(A[i], (digit_t*)&Montgomery_one);
+				}
+			}
+		}
+	}
+	for (int i = 0; i < m / w; i++)
+	{
+		fp2correction(A[i]);
+	}
+}
