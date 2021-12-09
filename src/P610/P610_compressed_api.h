@@ -73,12 +73,14 @@ void random_mod_order_B_SIDHp610(unsigned char* random_digits);
 // Input:  a private key PrivateKeyA in the range [0, 2^305 - 1], stored in 39 bytes. 
 // Output: the public key PublicKeyA consisting of 3 GF(p610^2) elements encoded in 274 bytes.
 int EphemeralKeyGeneration_A_SIDHp610_Compressed(const unsigned char* PrivateKeyA, unsigned char* PublicKeyA);
+int EphemeralKeyGeneration_A_SIDHp610_Compressed_new(const unsigned char* PrivateKeyA, unsigned char* PublicKeyA);
 
 // Bob's ephemeral key-pair generation
 // It produces a private key PrivateKeyB and computes the public key PublicKeyB.
 // The private key is an integer in the range [0, 2^Floor(Log(2,3^192)) - 1], stored in 38 bytes.  
 // The public key consists of 3 GF(p610^2) elements encoded in 274 bytes.
 int EphemeralKeyGeneration_B_SIDHp610_Compressed(const unsigned char* PrivateKeyB, unsigned char* PublicKeyB);
+int EphemeralKeyGeneration_B_SIDHp610_Compressed_new(const unsigned char* PrivateKeyB, unsigned char* PublicKeyB);
 
 // Alice's ephemeral shared secret computation
 // It produces a shared secret key SharedSecretA using her secret key PrivateKeyA and Bob's public key PublicKeyB

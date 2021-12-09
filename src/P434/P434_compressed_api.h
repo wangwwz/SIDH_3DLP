@@ -73,12 +73,14 @@ void random_mod_order_B_SIDHp434(unsigned char* random_digits);
 // Input:  a private key PrivateKeyA in the range [0, 2^216 - 1], stored in 27 bytes. 
 // Output: the public key PublicKeyA consisting of 3 values of length OALICE_BITS, one element in GF(p434^2) and 2 bytes encoded in 197 bytes.
 int EphemeralKeyGeneration_A_SIDHp434_Compressed(const unsigned char* PrivateKeyA, unsigned char* PublicKeyA);
+int EphemeralKeyGeneration_A_SIDHp434_Compressed_new(const unsigned char* PrivateKeyA, unsigned char* PublicKeyA);
 
 // Bob's ephemeral key-pair generation
 // It produces a private key PrivateKeyB and computes the public key PublicKeyB.
 // The private key is an integer in the range [0, 2^Floor(Log(2,3^137)) - 1], stored in 28 bytes. 
 // The public key consists of 3 values of length OALICE_BITS, one element in GF(p434^2) and 2 bytes encoded in 197 bytes.
 int EphemeralKeyGeneration_B_SIDHp434_Compressed(const unsigned char* PrivateKeyB, unsigned char* PublicKeyB);
+int EphemeralKeyGeneration_B_SIDHp434_Compressed_new(const unsigned char* PrivateKeyB, unsigned char* PublicKeyB);
 
 // Alice's ephemeral shared secret computation
 // It produces a shared secret key SharedSecretA using her secret key PrivateKeyA and Bob's public key PublicKeyB

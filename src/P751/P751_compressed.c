@@ -386,6 +386,8 @@ const uint64_t v_3_torsion[TABLE_V3_LEN][2 * NWORDS64_FIELD] =
 #define random_mod_order_B            random_mod_order_B_SIDHp751
 #define EphemeralKeyGeneration_A      EphemeralKeyGeneration_A_SIDHp751_Compressed
 #define EphemeralKeyGeneration_B      EphemeralKeyGeneration_B_SIDHp751_Compressed
+#define EphemeralKeyGeneration_A_new  EphemeralKeyGeneration_A_SIDHp751_Compressed_new
+#define EphemeralKeyGeneration_B_new  EphemeralKeyGeneration_B_SIDHp751_Compressed_new
 #define EphemeralSecretAgreement_A    EphemeralSecretAgreement_A_SIDHp751_Compressed
 #define EphemeralSecretAgreement_B    EphemeralSecretAgreement_B_SIDHp751_Compressed 
 #define crypto_kem_keypair            crypto_kem_keypair_SIKEp751_compressed

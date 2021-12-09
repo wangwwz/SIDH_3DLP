@@ -19,7 +19,7 @@ int cryptotest_kex()
 { // Testing key exchange
 	unsigned int i;
 	unsigned char PrivateKeyA[SIDH_SECRETKEYBYTES_A], PrivateKeyB[SIDH_SECRETKEYBYTES_B];
-	unsigned char PublicKeyA[SIDH_PUBLICKEYBYTES], PublicKeyB[SIDH_PUBLICKEYBYTES], PublicKeyA_new[SIDH_PUBLICKEYBYTES], PublicKeyB_new[SIDH_PUBLICKEYBYTES];
+	unsigned char PublicKeyA[SIDH_PUBLICKEYBYTES], PublicKeyB[SIDH_PUBLICKEYBYTES];
 	unsigned char SharedSecretA[SIDH_BYTES], SharedSecretB[SIDH_BYTES];
 	bool passed = true;
 
@@ -31,14 +31,15 @@ int cryptotest_kex()
 		random_mod_order_A(PrivateKeyA);
 		random_mod_order_B(PrivateKeyB);
 
+#ifdef EphemeralKeyGeneration_A_new
+		EphemeralKeyGeneration_A_new(PrivateKeyA, PublicKeyA);
+		EphemeralKeyGeneration_B_new(PrivateKeyB, PublicKeyB);
+#else
 		EphemeralKeyGeneration_A(PrivateKeyA, PublicKeyA);                            // Get some value as Alice's secret key and compute Alice's public key
 		EphemeralKeyGeneration_B(PrivateKeyB, PublicKeyB);                            // Get some value as Bob's secret key and compute Bob's public key
-#ifdef EphemeralKeyGeneration_A_new
-		EphemeralKeyGeneration_A_new(PrivateKeyA, PublicKeyA_new);
-		EphemeralKeyGeneration_B_new(PrivateKeyB, PublicKeyB_new);
 #endif
-		EphemeralSecretAgreement_A(PrivateKeyA, PublicKeyB_new, SharedSecretA);           // Alice computes her shared secret using Bob's public key
-		EphemeralSecretAgreement_B(PrivateKeyB, PublicKeyA_new, SharedSecretB);           // Bob computes his shared secret using Alice's public key
+		EphemeralSecretAgreement_A(PrivateKeyA, PublicKeyB, SharedSecretA);           // Alice computes her shared secret using Bob's public key
+		EphemeralSecretAgreement_B(PrivateKeyB, PublicKeyA, SharedSecretB);           // Bob computes his shared secret using Alice's public key
 
 		if (memcmp(SharedSecretA, SharedSecretB, SIDH_BYTES) != 0) {
 			passed = false;
